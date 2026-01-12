@@ -2,3 +2,4 @@ streamlit
 Pillow
 pytesseract
 pdfplumber
+pdf2image

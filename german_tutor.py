@@ -5,13 +5,12 @@ from PIL import Image
 import pytesseract
 import pdfplumber
 from pdf2image import convert_from_bytes
-import requests # Библиотека для запросов в интернет
+import requests
 
 # --- 1. Настройки ---
 st.set_page_config(page_title="Немецкий B2 Trainer", layout="wide")
 st.title("🇩🇪 Немецкий B2: Словарь + Синонимы")
 
-# Эти слова мы игнорируем (слишком простые для B2)
 STOP_WORDS = {
     "der", "die", "das", "und", "ist", "in", "zu", "den", "dem", "des", 
     "mit", "auf", "für", "von", "ein", "eine", "einen", "sich", "aus",
@@ -24,68 +23,76 @@ STOP_WORDS = {
 
 # --- 2. Функции ---
 
-@st.cache_data # Кэшируем, чтобы не искать одно и то же 100 раз
+@st.cache_data
 def get_german_synonyms(word):
-    """
-    Ищет синонимы через OpenThesaurus API.
-    Возвращает строку с топ-3 синонимами.
-    """
+    """Ищет синонимы через OpenThesaurus API"""
     url = f"https://www.openthesaurus.de/synonyme/search?q={word}&format=json"
     try:
         response = requests.get(url, timeout=5)
         data = response.json()
-        
         synonyms = []
-        # Разбираем ответ API
         for synset in data.get('synsets', []):
             for term in synset.get('terms', []):
                 term_word = term.get('term')
-                # Не добавляем само слово и слишком длинные фразы
                 if term_word.lower() != word.lower() and len(term_word.split()) < 3:
                     synonyms.append(term_word)
-        
-        # Берем только уникальные и первые 3-4 штуки
         unique_synonyms = list(dict.fromkeys(synonyms))
         return ", ".join(unique_synonyms[:4])
-        
     except Exception:
         return ""
 
 def extract_text_with_fallback(file_bytes, file_type):
-    """Читает текст из PDF или Картинок (включая OCR)"""
+    """Читает текст. Обрабатывает битые PDF."""
     text = ""
-    # 1. Быстрое чтение PDF
+    error_message = None
+
+    # 1. Быстрое чтение PDF (текстовый слой)
     if file_type == "application/pdf":
         try:
             with pdfplumber.open(file_bytes) as pdf:
                 for page in pdf.pages:
                     extracted = page.extract_text()
                     if extracted: text += extracted + "\n"
-        except: pass
+        except Exception:
+            pass # Игнорируем ошибки тут, попробуем OCR
 
-    # 2. Если текста мало — включаем OCR (для сканов)
+    # 2. Если текста мало — включаем OCR
     if len(text) < 50:
-        st.info("🔎 Это скан. Включаю глубокое сканирование (OCR)...")
         if file_type == "application/pdf":
-            images = convert_from_bytes(file_bytes.read())
-            progress_bar = st.progress(0)
-            for i, image in enumerate(images):
-                text += pytesseract.image_to_string(image, lang='deu') + "\n"
-                progress_bar.progress((i + 1) / len(images))
+            st.info("🔎 Это скан или сложный PDF. Включаю OCR (это может занять время)...")
+            try:
+                # ВАЖНО: Читаем байты заново, так как pdfplumber мог сдвинуть курсор
+                file_bytes.seek(0)
+                images = convert_from_bytes(file_bytes.read())
+                
+                progress_bar = st.progress(0)
+                for i, image in enumerate(images):
+                    text += pytesseract.image_to_string(image, lang='deu') + "\n"
+                    progress_bar.progress((i + 1) / len(images))
+            except Exception as e:
+                # Ловим ошибку битого PDF
+                error_message = f"CRITICAL_PDF_ERROR: {str(e)}"
         else:
-            image = Image.open(file_bytes)
-            text = pytesseract.image_to_string(image, lang='deu')
+            # Картинка
+            try:
+                image = Image.open(file_bytes)
+                text = pytesseract.image_to_string(image, lang='deu')
+            except Exception as e:
+                error_message = str(e)
+
+    if error_message:
+        return f"ERROR: {error_message}"
+        
     return text
 
 def clean_and_count(text, min_len):
     """Фильтрация слов"""
-    text = re.sub(r'[^a-zA-ZäöüÄÖÜß\s]', '', text) # Оставляем только буквы
+    text = re.sub(r'[^a-zA-ZäöüÄÖÜß\s]', '', text)
     words = text.split()
     filtered = []
     for word in words:
         w_lower = word.lower()
         if len(w_lower) >= min_len and w_lower not in STOP_WORDS and not w_lower.isdigit():
-            # Сохраняем слово с Заглавной буквы, если это существительное (простая эвристика)
             if word[0].isupper():
                 filtered.append(word)
             else:
@@ -99,30 +106,34 @@ with st.sidebar:
     min_len = st.slider("Мин. длина слова", 3, 12, 5)
     max_words = st.slider("Сколько слов анализировать", 10, 50, 20)
 
-st.write("### 🚀 Загрузи тест, и я создам таблицу с синонимами")
-uploaded_file = st.file_uploader("Загрузить файл (PDF/JPG)", type=['pdf', 'png', 'jpg', 'jpeg'])
+st.write("### 🚀 Загрузи тест (PDF/JPG)")
+st.info("💡 Если вылетает ошибка 'Syntax Error' — открой PDF в браузере и нажми 'Печать' -> 'Сохранить как PDF'. Это исправит файл.")
+
+uploaded_file = st.file_uploader("Загрузить файл", type=['pdf', 'png', 'jpg', 'jpeg'])
 
 if uploaded_file:
     text_content = ""
-    with st.spinner('Читаю текст...'):
-        try:
-            if uploaded_file.type == "application/pdf":
-                text_content = extract_text_with_fallback(uploaded_file, "application/pdf")
-            else:
-                text_content = extract_text_with_fallback(uploaded_file, uploaded_file.type)
-        except Exception as e:
-            st.error(f"Ошибка: {e}")
+    
+    with st.spinner('Обработка...'):
+        if uploaded_file.type == "application/pdf":
+            text_content = extract_text_with_fallback(uploaded_file, "application/pdf")
+        else:
+            text_content = extract_text_with_fallback(uploaded_file, uploaded_file.type)
 
-    if text_content and len(text_content) > 10:
-        # 1. Считаем слова
+    # Проверяем на критическую ошибку
+    if text_content.startswith("ERROR:"):
+        st.error("❌ Ошибка чтения файла.")
+        st.warning("Файл поврежден (сломана внутренняя структура XRef).")
+        st.markdown("**Как исправить:**\n1. Открой этот PDF на компьютере (в Chrome или Adobe).\n2. Нажми **Печать** -> Выбери принтер **'Сохранить как PDF'**.\n3. Загрузи новый файл сюда.")
+        with st.expander("Технические детали ошибки"):
+            st.code(text_content)
+            
+    elif text_content and len(text_content) > 10:
         all_words_data = clean_and_count(text_content, min_len)
-        
-        # Берем только топ N слов, чтобы не ждать вечность
         top_words = all_words_data[:max_words]
         
-        st.success(f"Найдено слов: {len(all_words_data)}. Анализируем топ-{max_words}...")
+        st.success(f"Найдено слов: {len(all_words_data)}. Подбираю синонимы к топ-{max_words}...")
         
-        # 2. Ищем синонимы (с прогресс-баром)
         table_data = []
         synonym_bar = st.progress(0)
         
@@ -136,19 +147,17 @@ if uploaded_file:
             })
             synonym_bar.progress((i + 1) / len(top_words))
             
-        # 3. Вывод таблицы
-        st.markdown("### 📚 Твой словарь для этого урока")
+        st.markdown("### 📚 Словарь для урока")
         st.data_editor(
             table_data,
             column_config={
                 "Выучить": st.column_config.CheckboxColumn("В словарь", default=False),
-                "Синонимы (для B2)": st.column_config.TextColumn("Синонимы", help="Используй эти слова, чтобы разнообразить речь"),
+                "Синонимы (для B2)": st.column_config.TextColumn("Синонимы"),
                 "Частота": st.column_config.NumberColumn("Повторов")
             },
             height=600,
             use_container_width=True,
             hide_index=True
         )
-        
     else:
-        st.warning("Не удалось прочитать текст. Попробуй файл лучшего качества.")
+        st.warning("Текст не найден или файл пуст.")

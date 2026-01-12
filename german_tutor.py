@@ -2,8 +2,8 @@ import streamlit as st
 import re
 from collections import Counter
 from PIL import Image
-import pytesseract # Библиотека для распознавания текста
-import pdfplumber # Библиотека для чтения PDF
+import pytesseract
+import pdfplumber
 
 # --- 1. Настройка страницы ---
 st.set_page_config(page_title="Немецкий B2 OCR", layout="wide")
@@ -13,7 +13,7 @@ st.title("🇩🇪 Немецкий B2: Из фото в словарь")
 with st.sidebar:
     st.header("Настройки")
     min_len = st.slider("Минимальная длина слова", 2, 10, 4)
-    # Выбор языка для OCR (важно для умлаутов ä, ö, ü)
+    # Выбор языка для OCR
     lang_option = st.selectbox("Язык текста", ["deu", "eng"], index=0)
 
 STOP_WORDS = {
@@ -27,7 +27,6 @@ STOP_WORDS = {
 def extract_text_from_image(image, lang):
     """Превращает картинку в текст с помощью Tesseract"""
     try:
-        # Указываем язык 'deu' для немецкого
         text = pytesseract.image_to_string(image, lang=lang)
         return text
     except Exception as e:
@@ -44,7 +43,6 @@ def extract_text_from_pdf(pdf_file):
 
 def clean_and_count(text):
     """Чистит текст и считает слова"""
-    # Оставляем буквы и умлауты
     text = re.sub(r'[^a-zA-ZäöüÄÖÜß\s]', '', text)
     words = text.split()
     
@@ -52,7 +50,7 @@ def clean_and_count(text):
     for word in words:
         w_lower = word.lower()
         if len(w_lower) >= min_len and w_lower not in STOP_WORDS:
-            filtered.append(word) # Сохраняем оригинальный регистр для существительных
+            filtered.append(word)
             
     return Counter(filtered).most_common()
 
@@ -76,8 +74,8 @@ if uploaded_file is not None:
 
     st.success("Текст распознан!")
     
-    # Показываем распознанный текст (можно скрыть под спойлер)
-    with st.expander("Показать "сырой" текст"):
+    # ИСПРАВЛЕННАЯ СТРОКА НИЖЕ (одинарные кавычки снаружи)
+    with st.expander('Показать "сырой" текст'):
         st.text(extracted_text)
 
     # --- 5. Анализ и Таблица ---

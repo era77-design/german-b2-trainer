@@ -14,14 +14,25 @@ st.set_page_config(page_title="DE Tutor Pro", layout="wide")
 st.title("🇩🇪 Немецкий: Словарь, Уровни и Примеры")
 
 # Оставляем только грамматический мусор. Полезные глаголы и существительные оставляем.
+# --- Обновленный список стоп-слов ---
 STOP_WORDS = {
+    # Стандартные (артикли, предлоги)
     "der", "die", "das", "und", "ist", "in", "zu", "den", "dem", "des", 
     "mit", "auf", "für", "von", "ein", "eine", "einen", "sich", "aus",
     "dass", "nicht", "war", "aber", "man", "bei", "wie", "wir", "oder",
     "kann", "sind", "werden", "wird", "auch", "noch", "nur", "vor", "nach",
     "über", "wenn", "zum", "zur", "habe", "hat", "durch", "unter", "diese",
     "dieser", "ihre", "seine", "meine", "vom", "am", "im", "um", "als",
-    "es", "sie", "er", "du", "ich", "mich", "mir", "dir", "uns", "ihnen"
+    "es", "sie", "er", "du", "ich", "mich", "mir", "dir", "uns", "ihnen",
+    "diesen", "demnach", "dabei", "damit", "dafür",
+    
+    # Мусор из учебников и тестов (ЭТО ВАЖНО)
+    "telc", "deutsch", "prüfung", "test", "seite", "page", "express", "hueber",
+    "aufgabe", "lösung", "antwortbogen", "teil", "kapitel", "übung", "verlag",
+    "auflage", "gmbh", "druck", "isbn", "münchen", "klett", "cornelsen",
+    "minuten", "punkte", "lesen", "hören", "schreiben", "sprechen",
+    "text", "texte", "überschrift", "überschriften", "modelltest",
+    "tipps", "tricks", "informationen", "antworten", "ankreuzen", "markieren"
 }
 
 # --- 2. Функции ---
@@ -190,3 +201,4 @@ if uploaded_file and st.button("🚀 Анализировать"):
                 height=800,
                 hide_index=True
             )
+

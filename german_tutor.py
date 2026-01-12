@@ -5,101 +5,121 @@ from PIL import Image
 import pytesseract
 import pdfplumber
 
-# --- 1. Настройка страницы ---
-st.set_page_config(page_title="Немецкий B2 OCR", layout="wide")
-st.title("🇩🇪 Немецкий B2: Из фото в словарь")
+# --- 1. Настройки ---
+st.set_page_config(page_title="Немецкий B2 Pro", layout="wide")
+st.title("🇩🇪 Немецкий B2: Анализатор тестов")
 
-# --- 2. Боковая панель ---
-with st.sidebar:
-    st.header("Настройки")
-    min_len = st.slider("Минимальная длина слова", 2, 10, 4)
-    # Выбор языка для OCR
-    lang_option = st.selectbox("Язык текста", ["deu", "eng"], index=0)
-
+# Стоп-слова (простые слова, которые нам не нужны)
 STOP_WORDS = {
     "der", "die", "das", "und", "ist", "in", "zu", "den", "dem", "des", 
     "mit", "auf", "für", "von", "ein", "eine", "einen", "sich", "aus",
-    "dass", "nicht", "war", "aber", "man", "bei", "wie", "wir"
+    "dass", "nicht", "war", "aber", "man", "bei", "wie", "wir", "oder",
+    "kann", "sind", "werden", "wird", "auch", "noch", "nur", "vor", "nach",
+    "über", "wenn", "zum", "zur", "habe", "hat", "durch", "unter", "diese"
 }
 
-# --- 3. Функции обработки ---
-
-def extract_text_from_image(image, lang):
-    """Превращает картинку в текст с помощью Tesseract"""
-    try:
-        text = pytesseract.image_to_string(image, lang=lang)
-        return text
-    except Exception as e:
-        st.error(f"Ошибка OCR: {e}")
-        return ""
+# --- 2. Функции ---
 
 def extract_text_from_pdf(pdf_file):
-    """Вытаскивает текст из PDF"""
-    text = ""
+    """Надежное чтение PDF"""
+    full_text = ""
     with pdfplumber.open(pdf_file) as pdf:
-        for page in pdf.pages:
-            text += page.extract_text() + "\n"
-    return text
+        # Показываем прогресс бар
+        progress_bar = st.progress(0)
+        total_pages = len(pdf.pages)
+        
+        for i, page in enumerate(pdf.pages):
+            extracted = page.extract_text()
+            if extracted:  # Проверяем, что текст есть
+                full_text += extracted + "\n"
+            # Обновляем прогресс
+            progress_bar.progress((i + 1) / total_pages)
+            
+    return full_text
 
-def clean_and_count(text):
-    """Чистит текст и считает слова"""
+def extract_text_from_image(image, lang):
+    """Чтение с картинки (Tesseract)"""
+    try:
+        return pytesseract.image_to_string(image, lang=lang)
+    except Exception as e:
+        return f"Error: {e}"
+
+def clean_and_count(text, min_len):
+    """Фильтрация слов"""
+    # Оставляем буквы и умлауты
     text = re.sub(r'[^a-zA-ZäöüÄÖÜß\s]', '', text)
     words = text.split()
     
     filtered = []
     for word in words:
         w_lower = word.lower()
-        if len(w_lower) >= min_len and w_lower not in STOP_WORDS:
-            filtered.append(word)
+        # Фильтр: длина, не стоп-слово, не число
+        if len(w_lower) >= min_len and w_lower not in STOP_WORDS and not w_lower.isdigit():
+            filtered.append(word) # Берем оригинальное слово (с Большой буквы)
             
+    # Считаем частоту
     return Counter(filtered).most_common()
 
-# --- 4. Интерфейс загрузки ---
+# --- 3. Интерфейс ---
 
-st.write("Загрузи фото теста (JPG/PNG) или PDF-файл.")
-uploaded_file = st.file_uploader("Перетащи файл сюда", type=['png', 'jpg', 'jpeg', 'pdf'])
+with st.sidebar:
+    st.header("⚙️ Настройки")
+    min_len = st.slider("Мин. длина слова", 3, 12, 5)
+    lang_option = st.selectbox("Язык (для фото)", ["deu", "eng"])
 
-extracted_text = ""
+st.write("Загрузи PDF учебника или фото страницы.")
+uploaded_file = st.file_uploader("Файл", type=['pdf', 'png', 'jpg', 'jpeg'])
 
-if uploaded_file is not None:
-    # Определяем тип файла и извлекаем текст
-    with st.spinner('Идет распознавание...'):
-        if uploaded_file.type == "application/pdf":
-            extracted_text = extract_text_from_pdf(uploaded_file)
-        else:
-            # Это картинка
-            image = Image.open(uploaded_file)
-            st.image(image, caption='Загруженное фото', width=300)
-            extracted_text = extract_text_from_image(image, lang=lang_option)
-
-    st.success("Текст распознан!")
+if uploaded_file:
+    text_content = ""
     
-    # ИСПРАВЛЕННАЯ СТРОКА НИЖЕ (одинарные кавычки снаружи)
-    with st.expander('Показать "сырой" текст'):
-        st.text(extracted_text)
+    with st.spinner('Читаю файл...'):
+        try:
+            if uploaded_file.type == "application/pdf":
+                text_content = extract_text_from_pdf(uploaded_file)
+            else:
+                image = Image.open(uploaded_file)
+                st.image(image, width=300)
+                text_content = extract_text_from_image(image, lang_option)
+        except Exception as e:
+            st.error(f"Ошибка чтения файла: {e}")
 
-    # --- 5. Анализ и Таблица ---
-    if extracted_text:
-        word_counts = clean_and_count(extracted_text)
+    # Если текст найден
+    if text_content:
+        # Показать кусочек текста для проверки
+        with st.expander("Показать найденный текст (первые 500 символов)"):
+            st.text(text_content[:500] + "...")
+
+        # Анализ
+        words_data = clean_and_count(text_content, min_len)
         
-        st.divider()
-        st.subheader(f"Найдено слов для B2: {len(word_counts)}")
+        st.success(f"Готово! Найдено уникальных слов: {len(words_data)}")
         
-        data = []
-        for word, count in word_counts:
-            data.append({
-                "Слово": word,
-                "Встретилось раз": count,
-                "Выучить": False
+        # Формируем таблицу
+        table_data = []
+        for word, count in words_data:
+            table_data.append({
+                "Слово (DE)": word,
+                "Частота": count,
+                "Перевод": "", # Сюда потом подключим Google Translate
+                "Учить": False
             })
             
+        # Вывод интерактивной таблицы
         st.data_editor(
-            data,
+            table_data,
             column_config={
-                "Выучить": st.column_config.CheckboxColumn(
+                "Учить": st.column_config.CheckboxColumn(
                     "В словарь",
-                    default=True
+                    default=False
+                ),
+                "Частота": st.column_config.NumberColumn(
+                    "Сколько раз в тексте"
                 )
             },
+            height=600,
+            use_container_width=True,
             hide_index=True
         )
+    else:
+        st.warning("⚠️ Текст не найден. Возможно, это скан (картинка внутри PDF). Попробуй сделать скриншот страницы и загрузить как JPG.")

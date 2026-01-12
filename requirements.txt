@@ -4,3 +4,4 @@ pytesseract
 pdfplumber
 pdf2image
 requests
+deep-translator

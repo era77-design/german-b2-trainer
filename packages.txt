@@ -1,7 +1,4 @@
-streamlit
-Pillow
-pytesseract
-pdfplumber
-pdf2image
-requests
-deep-translator
+tesseract-ocr
+tesseract-ocr-deu
+libgl1
+poppler-utils

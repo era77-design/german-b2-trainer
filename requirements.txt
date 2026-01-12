@@ -6,3 +6,4 @@ pdf2image
 requests
 deep-translator
 wordfreq
+pandas

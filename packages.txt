@@ -1,3 +1,4 @@
 tesseract-ocr
 tesseract-ocr-deu
 libgl1
+poppler-utils

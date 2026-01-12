@@ -6,11 +6,13 @@ import pytesseract
 import pdfplumber
 from pdf2image import convert_from_bytes
 import requests
+from deep_translator import GoogleTranslator
 
 # --- 1. Настройки ---
-st.set_page_config(page_title="Немецкий B2 Trainer", layout="wide")
-st.title("🇩🇪 Немецкий B2: Словарь + Синонимы")
+st.set_page_config(page_title="Немецкий B2 Pro", layout="wide")
+st.title("🇩🇪 Немецкий B2: Полный разбор")
 
+# Расширенный список стоп-слов (убираем мусор с титульных листов)
 STOP_WORDS = {
     "der", "die", "das", "und", "ist", "in", "zu", "den", "dem", "des", 
     "mit", "auf", "für", "von", "ein", "eine", "einen", "sich", "aus",
@@ -18,17 +20,26 @@ STOP_WORDS = {
     "kann", "sind", "werden", "wird", "auch", "noch", "nur", "vor", "nach",
     "über", "wenn", "zum", "zur", "habe", "hat", "durch", "unter", "diese",
     "telc", "deutsch", "prüfung", "test", "seite", "page", "express", "hueber",
-    "aufgabe", "lösung", "antwortbogen", "teil", "kapitel", "übung"
+    "aufgabe", "lösung", "antwortbogen", "teil", "kapitel", "übung", "verlag",
+    "auflage", "gmbh", "druck", "isbn", "münchen", "klett", "cornelsen"
 }
 
 # --- 2. Функции ---
 
 @st.cache_data
-def get_german_synonyms(word):
-    """Ищет синонимы через OpenThesaurus API"""
+def get_translation(word):
+    """Перевод на русский через Google"""
+    try:
+        return GoogleTranslator(source='de', target='ru').translate(word)
+    except:
+        return "-"
+
+@st.cache_data
+def get_synonyms(word):
+    """Синонимы через OpenThesaurus"""
     url = f"https://www.openthesaurus.de/synonyme/search?q={word}&format=json"
     try:
-        response = requests.get(url, timeout=3) # Тайм-аут 3 сек, чтобы не висело
+        response = requests.get(url, timeout=2)
         data = response.json()
         synonyms = []
         for synset in data.get('synsets', []):
@@ -37,138 +48,139 @@ def get_german_synonyms(word):
                 if term_word.lower() != word.lower() and len(term_word.split()) < 3:
                     synonyms.append(term_word)
         unique_synonyms = list(dict.fromkeys(synonyms))
-        return ", ".join(unique_synonyms[:4])
-    except Exception:
+        return ", ".join(unique_synonyms[:3]) # Берем топ-3
+    except:
         return ""
 
-def extract_text_safe(file_bytes, file_type, pages_to_scan):
+def find_context_sentence(text, word):
+    """Ищет предложение, в котором встретилось слово"""
+    sentences = re.split(r'(?<=[.!?]) +', text)
+    for sent in sentences:
+        if word in sent:
+            # Очищаем от лишних пробелов и переносов строк
+            clean_sent = sent.replace("\n", " ").strip()
+            # Обрезаем, если предложение слишком длинное
+            if len(clean_sent) > 150:
+                return clean_sent[:150] + "..."
+            return clean_sent
+    return "-"
+
+def extract_text_advanced(file_bytes, file_type, start_page, num_pages):
     """
-    Безопасное чтение. Если OCR — читаем только указанное количество страниц.
+    Читает N страниц, начиная со start_page.
     """
     text = ""
-    error_message = None
+    error = None
 
-    # 1. Сначала пробуем вытащить текст без OCR (это быстро и не ест память)
+    # Поправка: для пользователя стр 1, для питона стр 0
+    start_idx = start_page - 1 
+
+    # 1. Пробуем PDFPlumber (текст)
     if file_type == "application/pdf":
         try:
             with pdfplumber.open(file_bytes) as pdf:
-                # Читаем только первые N страниц или все, если текст цифровой
-                for i, page in enumerate(pdf.pages):
-                    if i >= pages_to_scan: break 
+                # Берем срез страниц
+                pages_to_read = pdf.pages[start_idx : start_idx + num_pages]
+                for page in pages_to_read:
                     extracted = page.extract_text()
                     if extracted: text += extracted + "\n"
         except Exception:
-            pass 
+            pass
 
-    # 2. Если текста нет (< 50 символов), значит это СКАН. Включаем OCR с лимитом.
+    # 2. Если текста нет -> OCR
     if len(text) < 50:
         if file_type == "application/pdf":
-            st.warning(f"📄 Это скан. Распознаю первые {pages_to_scan} стр., чтобы сберечь память...")
+            st.warning(f"📄 Сканирую страницы {start_page}-{start_page + num_pages - 1} через OCR...")
             try:
-                # ВАЖНО: seek(0) возвращает курсор в начало файла
                 file_bytes.seek(0)
-                
-                # Конвертируем ТОЛЬКО нужные страницы (first_page, last_page)
-                # Это спасет сервер от падения!
                 images = convert_from_bytes(
                     file_bytes.read(), 
-                    first_page=1, 
-                    last_page=pages_to_scan
+                    first_page=start_page, 
+                    last_page=start_page + num_pages - 1
                 )
                 
-                progress_bar = st.progress(0)
-                for i, image in enumerate(images):
-                    text += pytesseract.image_to_string(image, lang='deu') + "\n"
-                    progress_bar.progress((i + 1) / len(images))
-                    
+                bar = st.progress(0)
+                for i, img in enumerate(images):
+                    text += pytesseract.image_to_string(img, lang='deu') + "\n"
+                    bar.progress((i + 1) / len(images))
             except Exception as e:
-                error_message = f"Ошибка PDF: {str(e)}"
+                error = str(e)
         else:
-            # Обычная картинка
-            try:
-                image = Image.open(file_bytes)
-                text = pytesseract.image_to_string(image, lang='deu')
-            except Exception as e:
-                error_message = str(e)
+            # Картинка
+            img = Image.open(file_bytes)
+            text = pytesseract.image_to_string(img, lang='deu')
 
-    if error_message:
-        return f"ERROR: {error_message}"
-        
-    return text
+    return text, error
 
-def clean_and_count(text, min_len):
-    """Фильтрация слов"""
-    text = re.sub(r'[^a-zA-ZäöüÄÖÜß\s]', '', text)
-    words = text.split()
+def get_top_words(text, min_len):
+    # Очистка
+    clean_text = re.sub(r'[^a-zA-ZäöüÄÖÜß\s]', '', text)
+    words = clean_text.split()
     filtered = []
+    
     for word in words:
         w_lower = word.lower()
         if len(w_lower) >= min_len and w_lower not in STOP_WORDS and not w_lower.isdigit():
-            if word[0].isupper():
-                filtered.append(word)
-            else:
-                filtered.append(w_lower)
+            # Оставляем оригинальный регистр, если слово чаще с большой буквы
+            filtered.append(word)
+            
     return Counter(filtered).most_common()
 
 # --- 3. Интерфейс ---
 
 with st.sidebar:
-    st.header("⚙️ Настройки")
-    min_len = st.slider("Мин. длина слова", 3, 12, 5)
-    max_words = st.slider("Сколько слов брать в словарь", 10, 50, 20)
-    # НОВАЯ НАСТРОЙКА: Лимит страниц
-    pages_limit = st.slider("Сколько страниц сканировать (OCR)", 1, 10, 3, help="Если файл большой, ставь меньше 5, иначе сервер зависнет!")
+    st.header("⚙️ Настройки анализа")
+    # ВАЖНО: Выбор страницы начала
+    start_page = st.number_input("Начать со страницы №", min_value=1, value=5, help="Пропусти первые страницы (обложку), ставь сразу 5 или 10")
+    pages_limit = st.slider("Сколько страниц читать", 1, 5, 2)
+    max_words_count = st.slider("Сколько слов учить", 5, 30, 15)
 
-st.write("### 🚀 Загрузи тест (PDF/JPG)")
-st.info("💡 Совет: Для больших книг (PDF > 5 МБ) выбирай в настройках слева сканирование 3-5 страниц за раз.")
+st.write("### 🇩🇪 Загрузи учебник")
+st.info("💡 Совет: В настройках слева поставь 'Начать со страницы 5' или '10', чтобы пропустить титульный лист.")
 
-uploaded_file = st.file_uploader("Загрузить файл", type=['pdf', 'png', 'jpg', 'jpeg'])
+uploaded_file = st.file_uploader("Файл (PDF)", type=['pdf', 'jpg'])
 
 if uploaded_file:
-    text_content = ""
-    
-    with st.spinner('Обработка...'):
-        if uploaded_file.type == "application/pdf":
-            text_content = extract_text_safe(uploaded_file, "application/pdf", pages_limit)
-        else:
-            text_content = extract_text_safe(uploaded_file, uploaded_file.type, 1)
-
-    if text_content.startswith("ERROR:"):
-        st.error("❌ Ошибка чтения файла.")
-        st.warning("Файл поврежден или слишком тяжелый.")
-        st.code(text_content)
-        st.markdown("**Решение:** Попробуй 'распечатать' этот PDF в новый файл через 'Сохранить как PDF' на компьютере.")
+    # Кнопка запуска, чтобы не пересчитывать при смене настроек
+    if st.button("🚀 Анализировать"):
+        with st.spinner('Читаю, перевожу и ищу синонимы...'):
+            text_content, err = extract_text_advanced(uploaded_file, uploaded_file.type, start_page, pages_limit)
             
-    elif text_content and len(text_content) > 10:
-        all_words_data = clean_and_count(text_content, min_len)
-        top_words = all_words_data[:max_words]
-        
-        st.success(f"Прочитано. Найдено слов: {len(all_words_data)}. Ищу синонимы...")
-        
-        table_data = []
-        synonym_bar = st.progress(0)
-        
-        for i, (word, count) in enumerate(top_words):
-            syns = get_german_synonyms(word)
-            table_data.append({
-                "Слово": word,
-                "Синонимы (для B2)": syns if syns else "—",
-                "Частота": count,
-                "Выучить": False
-            })
-            synonym_bar.progress((i + 1) / len(top_words))
-            
-        st.markdown("### 📚 Словарь")
-        st.data_editor(
-            table_data,
-            column_config={
-                "Выучить": st.column_config.CheckboxColumn("В словарь", default=False),
-                "Синонимы (для B2)": st.column_config.TextColumn("Синонимы"),
-                "Частота": st.column_config.NumberColumn("Повторов")
-            },
-            height=600,
-            use_container_width=True,
-            hide_index=True
-        )
-    else:
-        st.warning("Текст не найден. Если это PDF, убедитесь, что он не пустой.")
+            if err:
+                st.error("Ошибка чтения. Попробуй пересохранить PDF.")
+            elif len(text_content) < 10:
+                st.warning("Текст не найден. Проверь номера страниц.")
+            else:
+                # 1. Анализ слов
+                words_freq = get_top_words(text_content, 4) # мин длина 4
+                top_words = words_freq[:max_words_count]
+                
+                # 2. Сбор данных (Перевод + Синонимы + Контекст)
+                table_data = []
+                progress = st.progress(0)
+                
+                for i, (word, count) in enumerate(top_words):
+                    translation = get_translation(word)
+                    syns = get_synonyms(word)
+                    context = find_context_sentence(text_content, word)
+                    
+                    table_data.append({
+                        "Слово": word,
+                        "Перевод 🇷🇺": translation,
+                        "Синонимы (DE)": syns if syns else "—",
+                        "Контекст (фраза)": context,
+                        "Выучить": False
+                    })
+                    progress.progress((i + 1) / len(top_words))
+                
+                st.success(f"Готово! Обработаны страницы {start_page}-{start_page+pages_limit-1}")
+                
+                st.data_editor(
+                    table_data,
+                    column_config={
+                        "Выучить": st.column_config.CheckboxColumn("✅", default=False),
+                        "Контекст (фраза)": st.column_config.TextColumn("Где встретилось", width="large"),
+                    },
+                    height=800,
+                    hide_index=True
+                )
